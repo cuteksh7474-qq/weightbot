@@ -201,7 +201,7 @@ def ocr_text_from_images(files):
     return "
 ".join(chunks), None
 
-def dims_from_ocr(files):
+def dims_from_ocr(files):     text, _ = ocr_text_from_images(files)     d = dims_pattern(text) or dims_anywhere(text)     return d, textfiles):
     text,_=ocr_text_from_images(files)
     d = dims_pattern(text) or dims_anywhere(text)
     return d, text
