@@ -2,9 +2,10 @@ streamlit==1.37.0
 pillow==10.4.0
 pandas==2.2.2
 xlsxwriter==3.2.0
-easyocr==1.7.1
-opencv-python-headless==4.10.0.84
 numpy==1.26.4
-gspread==6.1.2
-google-auth==2.33.0
-openai==1.43.0
+opencv-python-headless==4.10.0.84
+
+# OCR 필수
+torch==2.2.2
+torchvision==0.17.2
+easyocr==1.7.1
