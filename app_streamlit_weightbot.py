@@ -54,11 +54,11 @@ def u2cm(v,unit):
     return v
 
 def extract_capacity_L(txt):
-    m=re.search(r'(\\d+(?:\\.\\d+)?)\\s*(l|리터|升)',(txt or "").lower())
+    m=re.search(r'(\d+(?:\.\d+)?)\s*(l|리터|升)',(txt or "").lower())
     if m:
         try: return float(m.group(1))
         except: return 0.0
-    m2=re.search(r'(\\d+(?:\\.\\d+)?)\\s*(ml|毫升)',(txt or "").lower())
+    m2=re.search(r'(\d+(?:\.\d+)?)\s*(ml|毫升)',(txt or "").lower())
     if m2:
         try: return float(m2.group(1))/1000.0
         except: return 0.0
@@ -66,7 +66,7 @@ def extract_capacity_L(txt):
 
 def parse_weight(txt):
     t=(txt or "").lower()
-    m=re.search(r'(\\d+(?:\\.\\d+)?)\\s*(kg|g|斤|千克|公斤|克)',t)
+    m=re.search(r'(\d+(?:\.\d+)?)\s*(kg|g|斤|千克|公斤|克)',t)
     if not m: return None
     val=float(m.group(1)); u=m.group(2)
     if u in ["g","克"]: val/=1000.0
@@ -76,13 +76,13 @@ def parse_weight(txt):
 def dims_pattern(txt):
     if not txt: return None
     s=txt.replace("×","x").replace("＊","x").replace("X","x").replace("：",":").replace("，",",")
-    m=re.search(r'(\\d+(?:\\.\\d+)?)\\s*[x\\*]\\s*(\\d+(?:\\.\\d+)?)\\s*[x\\*]\\s*(\\d+(?:\\.\\d+)?)(\\s*(mm|cm|m|毫米|厘米|米))?',s,re.I)
+    m=re.search(r'(\d+(?:\.\d+)?)\s*[x\*]\s*(\d+(?:\.\d+)?)\s*[x\*]\s*(\d+(?:\.\d+)?)(\s*(mm|cm|m|毫米|厘米|米))?',s,re.I)
     if m:
         a,b,c=float(m.group(1)),float(m.group(2)),float(m.group(3)); unit=(m.group(5) or "cm")
         L,W,H=sorted([u2cm(a,unit),u2cm(b,unit),u2cm(c,unit)],reverse=True)
         return (L,W,H)
     # 长…宽…高…
-    m2=re.search(r'长\\s*(\\d+(?:\\.\\d+)?)\\s*(mm|cm|m|毫米|厘米|米)?\\s*宽\\s*(\\d+(?:\\.\\d+)?)\\s*(mm|cm|m|毫米|厘米|米)?\\s*高\\s*(\\d+(?:\\.\\d+)?)\\s*(mm|cm|m|毫米|厘米|米)?',s,re.I)
+    m2=re.search(r'长\s*(\d+(?:\.\d+)?)\s*(mm|cm|m|毫米|厘米|米)?\s*宽\s*(\d+(?:\.\d+)?)\s*(mm|cm|m|毫米|厘米|米)?\s*高\s*(\d+(?:\.\d+)?)\s*(mm|cm|m|毫米|厘米|米)?',s,re.I)
     if m2:
         L=u2cm(float(m2.group(1)),(m2.group(2) or "cm")); W=u2cm(float(m2.group(3)),(m2.group(4) or "cm")); H=u2cm(float(m2.group(5)),(m2.group(6) or "cm"))
         return (L,W,H)
@@ -90,7 +90,7 @@ def dims_pattern(txt):
 
 def dims_anywhere(txt):
     if not txt: return None
-    nums=re.findall(r'(\\d+(?:\\.\\d+)?)\\s*(mm|cm|m|毫米|厘米|米)',txt,re.I)
+    nums=re.findall(r'(\d+(?:\.\d+)?)\s*(mm|cm|m|毫米|厘米|米)',txt,re.I)
     vals=[u2cm(float(n),u.lower()) for n,u in nums]
     vals=[v for v in vals if 5<=v<=300]
     vals=sorted(vals,reverse=True)
@@ -130,11 +130,11 @@ def ocr_text_from_images(files):
             im=Image.open(io.BytesIO(f.read())).convert("RGB")
             pim=preprocess_for_ocr(im)
             arr=np.array(pim)
-            text = "\\n".join(reader.readtext(arr, detail=0, paragraph=True))
+            text = "\n".join(reader.readtext(arr, detail=0, paragraph=True))
             chunks.append(text)
         except Exception as e:
             chunks.append("")
-    return "\\n".join(chunks), None
+    return "\n".join(chunks), None
 
 def dims_from_ocr(files):
     text,_=ocr_text_from_images(files)
@@ -215,16 +215,26 @@ with colx:
         else:
             st.error("OCR에서 치수 미검출. 오른쪽 '강제 적용'을 사용하세요.")
 with coly:
-    force_txt = st.text_input("입력하세요(예: 750mm, 640mm, 550mm / 75cm,55cm,64cm)")
+    force_txt = st.text_input("입력하세요(예: 64 75 55 / 64,75,55 / 64x75x55 / 750mm,640mm,550mm)")
     if st.button("➡ 강제 적용"):
-        nums=re.findall(r'(\\d+(?:\\.\\d+)?)\\s*(mm|cm|m)', force_txt or "", re.I)
+        # 1) 숫자+단위(mm/cm/m)
+        nums=re.findall(r'(\d+(?:\.\d+)?)\s*(mm|cm|m)', force_txt or "", re.I)
         vals=[u2cm(float(n),u.lower()) for n,u in nums if 5<=u2cm(float(n),u.lower())<=300]
-        if len(vals)>=3:
+
+        # 2) 단위 없는 숫자 3개(공백/콤마/x/×/＊ 구분) -> cm로 간주
+        if len(vals) < 3:
+            clean = re.sub(r'[xX×＊,;/]+',' ', force_txt or '')
+            bare = re.findall(r'(\d+(?:\.\d+)?)', clean)
+            vals2 = [float(v) for v in bare if 5<=float(v)<=300]
+            if len(vals2) >= 3:
+                vals = vals + vals2[:3]  # 앞에서부터 3개 사용, 단위는 cm로 간주
+
+        if len(vals) >= 3:
             L,W,H=sorted(vals,reverse=True)[:3]
             st.session_state["boxL"],st.session_state["boxW"],st.session_state["boxH"]=round(L,1),round(W,1),round(H,1)
             st.success(f"강제 적용: {L:.1f} x {W:.1f} x {H:.1f} cm")
         else:
-            st.error("숫자 3개(단위 포함)를 인식하지 못했습니다.")
+            st.error("숫자 3개를 찾지 못했습니다. 예: 64 75 55 (단위 생략 시 cm로 간주)")
 
 with st.expander("🔎 OCR 번역/진단 보기"):
     st.write(f"OCR 가능 여부 : {HAS_OCR}")
@@ -253,11 +263,11 @@ power_choices=["선택 안함"]+[f"{w}W" for w in range(100,1000,100)]+[f"{k}kW"
 def p2kw(t):
     if not t: return 0.0
     s=(t or "").lower().replace(" ","")
-    m=re.search(r'(\\d+(?:\\.\\d+)?)\\s*kw',s)
+    m=re.search(r'(\d+(?:\.\d+)?)\s*kw',s)
     if m:
         try:return float(m.group(1))
         except:return 0.0
-    m=re.search(r'(\\d+(?:\\.\\d+)?)\\s*w',s)
+    m=re.search(r'(\d+(?:\.\d+)?)\s*w',s)
     if m:
         try:return float(m.group(1))/1000.0
         except:return 0.0
