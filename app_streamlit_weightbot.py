@@ -1,40 +1,35 @@
 
 import streamlit as st
 from PIL import Image
-import io, os, json, time, re, math
+import io, json, time, re, math
 import pandas as pd
 
-# Optional OCR dependencies
+# ---------- Optional OCR (best-effort; app works without it) ----------
 try:
     import easyocr
     import numpy as np
-    import cv2
     HAS_OCR = True
 except Exception:
     HAS_OCR = False
 
 st.set_page_config(page_title="WeightBot · 이미지 기반 무게 추정(웹·학습형)", page_icon="⚖️", layout="wide")
 
-# -----------------------------
-# Local feedback DB (simple)
-# -----------------------------
+# ---------- Simple local feedback storage ----------
 LOCAL_DB = "feedback_db.json"
 def load_local_db():
     try:
-        with open(LOCAL_DB,"r",encoding="utf-8") as f:
+        with open(LOCAL_DB, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return {}
 def save_local_db(data):
     try:
-        with open(LOCAL_DB,"w",encoding="utf-8") as f:
-            json.dump(data,f,ensure_ascii=False,indent=2)
+        with open(LOCAL_DB, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
 
-# -----------------------------
-# Dictionaries & Priors
-# -----------------------------
+# ---------- Rules & priors ----------
 CATEGORY_KEYWORDS = {
     "rice_cooker": ["밥솥","전기밥솥","电饭煲","电饭锅","rice cooker"],
     "kettle": ["주전자","전기주전자","电热水壶","kettle"],
@@ -61,24 +56,14 @@ PRIORS = {
     "pot_pan": {"base":1.80},
     "beauty": {"base":0.40},
 }
-# 전력(모터/히터) 기반 가중치 (kg/kW) – 소형가전 중심의 보수적 추정값
+# 전력(모터/히터) 가중치 (kg/kW) – 보수값
 POWER_FACTORS_KG_PER_KW = {
-    "small_elec": 0.9,
-    "blender": 0.8,
-    "air_fryer": 0.6,
-    "beauty": 0.5,
-    "kettle": 0.3,
-    "rice_cooker": 0.35,
-    "thermos": 0.0,
-    "container": 0.0,
-    "shoes": 0.0,
-    "clothing": 0.0,
-    "pot_pan": 0.0
+    "small_elec": 0.9, "blender": 0.8, "air_fryer": 0.6, "beauty": 0.5,
+    "kettle": 0.3, "rice_cooker": 0.35,
+    "thermos": 0.0, "container": 0.0, "shoes": 0.0, "clothing": 0.0, "pot_pan": 0.0
 }
 
-# -----------------------------
-# Helper functions
-# -----------------------------
+# ---------- Parsers ----------
 def infer_category_from_name(name: str):
     name_l = (name or "").lower()
     for cat, kws in CATEGORY_KEYWORDS.items():
@@ -110,7 +95,7 @@ def parse_weight_from_text(txt: str):
         return round(val,2)
     return None
 
-def cn_unit_to_cm(val, unit):
+def _cn_unit_to_cm(val, unit):
     unit = (unit or "cm").lower()
     if unit in ["mm","毫米"]: return val/10.0
     if unit in ["cm","厘米"]: return val
@@ -123,12 +108,12 @@ def parse_dims_from_text(txt: str):
     if m:
         a,b,c = float(m.group(1)), float(m.group(2)), float(m.group(3))
         unit = (m.group(5) or "cm").lower()
-        return tuple(sorted([cn_unit_to_cm(a,unit), cn_unit_to_cm(b,unit), cn_unit_to_cm(c,unit)], reverse=True))
+        return tuple(sorted([_cn_unit_to_cm(a,unit), _cn_unit_to_cm(b,unit), _cn_unit_to_cm(c,unit)], reverse=True))
     m2 = re.search(r'长\s*(\d+(?:\.\d+)?)\s*(mm|cm|m|毫米|厘米|米)?\s*宽\s*(\d+(?:\.\d+)?)\s*(mm|cm|m|毫米|厘米|米)?\s*高\s*(\d+(?:\.\d+)?)\s*(mm|cm|m|毫米|厘米|米)?', txt, re.I)
     if m2:
-        l = cn_unit_to_cm(float(m2.group(1)), (m2.group(2) or "cm").lower())
-        w = cn_unit_to_cm(float(m2.group(3)), (m2.group(4) or "cm").lower())
-        h = cn_unit_to_cm(float(m2.group(5)), (m2.group(6) or "cm").lower())
+        l = _cn_unit_to_cm(float(m2.group(1)), (m2.group(2) or "cm").lower())
+        w = _cn_unit_to_cm(float(m2.group(3)), (m2.group(4) or "cm").lower())
+        h = _cn_unit_to_cm(float(m2.group(5)), (m2.group(6) or "cm").lower())
         return (l,w,h)
     return None
 
@@ -218,14 +203,12 @@ def estimate_weight_auto(product_name, capacity_L, category_key, dims_cm, feedba
             "confidence": conf, "category": category_key, "delta_applied": round(delta,2),
             "power_kw": power_kw, "power_factor": factor}
 
-# -----------------------------
-# OCR utilities
-# -----------------------------
+# ---------- OCR utilities ----------
 def ocr_text_from_image(img_bytes):
     if not HAS_OCR: return None, "OCR 모듈 미설치(easyocr)."
     try:
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-        arr = __import__("numpy").array(img)
+        arr = np.array(img)
         reader = easyocr.Reader(['ch_sim','en','ko'], gpu=False)
         result = reader.readtext(arr, detail=0, paragraph=True)
         text = "\n".join(result)
@@ -252,11 +235,9 @@ def extract_option_candidates_from_text(txt: str):
             out.append(i); seen.add(i)
     return out[:20]
 
-# -----------------------------
-# UI
-# -----------------------------
+# ---------- UI ----------
 st.title("⚖️ WeightBot · 이미지 기반 무게 추정(웹·학습형)")
-st.caption("이미지·상품명·상품코드만 입력하면 결과는 항상 **한국어**로 보여드립니다. 옵션명이 제공되면 **우선 적용**, 없으면 자동 옵션코드 생성. 전기 제품은 **출력용량(W/kW)** 선택 시 추가 반영합니다.")
+st.caption("이미지·상품명·상품코드만 입력하면 결과는 항상 **한국어**로 표기됩니다. 옵션명이 제공되면 **우선 적용**하고, 없을 때만 자동 옵션코드를 생성합니다. 옵션명 옆에서 **출력용량(W/kW)** 을 선택할 수 있습니다.")
 
 db = load_local_db()
 
@@ -269,25 +250,23 @@ with colB:
     if imgs:
         st.image(imgs[0], caption="대표 이미지", use_column_width=True)
 with colC:
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        manual_L = st.number_input("수동 용량(L, 선택)", min_value=0.0, step=0.1, value=0.0)
-    with c2:
-        power_options = ["선택 안함"] + [f"{i}W" for i in range(100,1000,100)] + [f"{i}kW" for i in range(1,11)]
-        power_choice = st.selectbox("출력용량(선택, W/kW)", options=power_options, index=0, help="전기·모터 제품이면 선택하세요. 백단위 W(9개) + 1~10 kW(10개)")
-    with c3:
-        num_options = st.number_input("옵션 개수(옵션명 없을 때만 사용)", min_value=1, step=1, value=1)
+    c1, c2 = st.columns([1,1])
+    manual_L = c1.number_input("수동 용량(L, 선택)", min_value=0.0, step=0.1, value=0.0)
+    num_options = c2.number_input("옵션 개수(옵션명 없을 때만 사용)", min_value=1, step=1, value=1)
 
 st.markdown("---")
 
+# OCR aggregate text
 ocr_text = ""
 if imgs:
     for i, f in enumerate(imgs, start=1):
-        t, err = ocr_text_from_image(f.read())
+        t, _ = ocr_text_from_image(f.read())
         if t: ocr_text += f"\n[이미지{i}]\n{t}\n"
 
+# Option names area
 st.subheader("옵션명 입력(선택, 한 줄에 하나) — 제공되면 **우선 적용**")
-if "option_names_text" not in st.session_state: st.session_state["option_names_text"] = ""
+if "option_names_text" not in st.session_state:
+    st.session_state["option_names_text"] = ""
 colO1, colO2 = st.columns([3,1])
 with colO1:
     option_names_text = st.text_area("옵션명 목록(예: 검정색 3L / 800W)", key="option_names_text", height=120, placeholder="여기에 옵션명을 한 줄에 하나씩 입력하세요.")
@@ -302,27 +281,36 @@ with colO2:
         else:
             st.warning("먼저 이미지(스펙표)를 업로드하세요.")
 
+# Build options list
 option_names = [ln.strip() for ln in (st.session_state.get("option_names_text") or "").splitlines() if ln.strip()]
 total_options = len(option_names) if option_names else int(num_options)
 
+# Global inference
 auto_cat = infer_category_from_name(product_name)
 global_cap = extract_capacity_L(product_name) or extract_capacity_L(ocr_text) or manual_L or 0.0
 dims_from_ocr = parse_dims_from_text(ocr_text) or (30.0,30.0,25.0)
-global_power_kw = parse_power_to_kw(power_choice)
 
-st.write(f"🧠 자동 판별: 카테고리=`{auto_cat}`, 기준 용량≈`{global_cap} L`, OCR 치수(cm)={dims_from_ocr}, 전력={global_power_kw} kW")
+# Dropdown choices for per-option power
+power_choices = ["선택 안함"] + [f"{w}W" for w in range(100, 1000, 100)] + [f"{k}kW" for k in range(1, 11)]
+
+st.write(f"🧠 자동 판별: 카테고리=`{auto_cat}`, 기준 용량≈`{global_cap} L`, OCR 치수(cm)={dims_from_ocr}")
 
 rows = []
 for idx in range(1, total_options+1):
     with st.expander(f"옵션 {idx}", expanded=(idx==1)):
         opt_code = f"{product_code}-{idx:02d}" if product_code else f"OPT-{idx:02d}"
-        display_name = option_names[idx-1] if option_names else f"(자동){opt_code}"
+        base_name = option_names[idx-1] if option_names else f"(자동){opt_code}"
         st.text_input("옵션코드", value=opt_code, key=f"opt_code_{idx}", disabled=True)
-        st.text_input("옵션명(표 제공/수동 입력 시 우선)", value=display_name, key=f"opt_name_{idx}")
 
-        cap_opt = extract_capacity_L(display_name) or global_cap
-        net_override = parse_weight_from_text(display_name)
-        power_opt_kw = parse_power_to_kw(display_name) or global_power_kw
+        # 옵션명 + 출력용량 드롭다운 나란히
+        col_nm, col_pw = st.columns([3, 1])
+        opt_name = col_nm.text_input("옵션명(표 제공/수동 입력 시 우선)", value=base_name, key=f"opt_name_{idx}")
+        opt_power_choice = col_pw.selectbox("출력용량", options=power_choices, index=0, key=f"opt_power_{idx}")
+
+        # 우선순위: 옵션 드롭다운 > 옵션명 내 표기
+        power_opt_kw = parse_power_to_kw(opt_power_choice) or parse_power_to_kw(opt_name)
+        cap_opt = extract_capacity_L(opt_name) or global_cap
+        net_override = parse_weight_from_text(opt_name)
 
         result = estimate_weight_auto(
             product_name=product_name,
@@ -336,19 +324,20 @@ for idx in range(1, total_options+1):
         )
 
         st.markdown(f"""
-**결과(한국어):**  
-- 옵션코드: **{opt_code}**  
-- 옵션명: **{display_name}**  
-- **순중량**: **{result['net_kg']} kg**  
-- **포장 포함 총중량**: **{result['gross_kg']} kg**  
-- **부피무게(5000 / 6000)**: **{result['vol_5000']} / {result['vol_6000']} kg**  
-- 전력 반영: **{result['power_kw']} kW × {result['power_factor']} kg/kW**  
-- 신뢰도: **{result['confidence']}%** *(카테고리 평균 보정: {result['delta_applied']} kg)*
+**결과(한국어):**
+- 옵션코드: **{opt_code}**
+- 옵션명: **{opt_name}**
+- **순중량**: **{result['net_kg']} kg**
+- **총중량**: **{result['gross_kg']} kg**
+- **부피무게(5000/6000)**: **{result['vol_5000']} / {result['vol_6000']} kg**
+- 전력 반영: **{result['power_kw']} kW × {result['power_factor']} kg/kW**
+- 신뢰도: **{result['confidence']}%** *(카테고리 보정 Δ={result['delta_applied']} kg)*
 """)
+
         rows.append({
             "product_code": product_code,
             "option_code": opt_code,
-            "option_name": display_name,
+            "option_name": opt_name,
             "product_name": product_name,
             "category": result["category"],
             "capacity_L": cap_opt,
@@ -372,6 +361,7 @@ if rows:
         df.to_excel(writer, sheet_name="results", index=False)
     st.download_button("결과를 Excel로 저장", data=buf.getvalue(), file_name=f"{(product_code or 'results')}_estimate.xlsx")
 
+# Feedback for learning
 st.subheader("실측무게 피드백 → 학습 반영")
 c1,c2,c3 = st.columns(3)
 with c1:
@@ -384,7 +374,8 @@ if st.button("피드백 저장 & 학습 반영"):
     if not fb_opt or fb_pred<=0 or fb_actual<=0:
         st.error("옵션코드/예측/실측값을 모두 입력하세요.")
     else:
+        cat_now = infer_category_from_name(product_name)
         delta = round(fb_actual - fb_pred, 3)
-        db[fb_opt] = {"predicted": fb_pred, "actual": fb_actual, "delta": delta, "category": infer_category_from_name(product_name), "ts": time.time()}
+        db[fb_opt] = {"predicted": fb_pred, "actual": fb_actual, "delta": delta, "category": cat_now, "ts": time.time()}
         save_local_db(db)
-        st.success(f"저장 완료! (Δ={delta} kg) 다음부터 같은 카테고리에 평균 보정이 적용됩니다.")
+        st.success(f"저장 완료! (Δ={delta} kg) 같은 카테고리에 평균 보정이 적용됩니다.")
